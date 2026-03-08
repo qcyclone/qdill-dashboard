@@ -1,0 +1,31 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>纳指基金监控看板</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <h1>纳指基金监控看板</h1>
+      <div class="hero-actions">
+        <button id="refreshBtn" class="btn-primary">更新所有数据</button>
+        <button id="saveAllBtn" class="btn-secondary">⇩ 保存图片</button>
+      </div>
+      <div class="status">
+        <span id="statusText">等待更新</span>
+        <span id="statusCount">0/23</span>
+      </div>
+      <div class="progress-track">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+    </header>
+
+    <section id="board"></section>
+  </main>
+  <script src="./script.js"></script>
+</body>
+</html>
+

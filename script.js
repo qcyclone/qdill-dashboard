@@ -278,13 +278,20 @@ function fitPanelTable(panel) {
   const table = panel.querySelector("table");
   if (!table) return;
 
-  const maxFont = 15;
-  const minFont = 15;
+  const vw = window.innerWidth || document.documentElement.clientWidth || 1200;
+  const isMobile = vw <= 768;
+  const maxFont = isMobile ? 13.5 : 15;
+  const minFont = isMobile ? 9.5 : 12;
   let font = maxFont;
 
   while (font >= minFont) {
-    const padY = Math.max(4, Math.round(font * 0.52));
-    const padX = Math.max(2, Math.round(font * 0.28));
+    const padY = isMobile
+      ? Math.max(2, Math.round(font * 0.4))
+      : Math.max(4, Math.round(font * 0.52));
+    const padX = isMobile
+      ? Math.max(1, Math.round(font * 0.22))
+      : Math.max(2, Math.round(font * 0.28));
+
     panel.style.setProperty("--tbl-font", `${font}px`);
     panel.style.setProperty("--cell-pad-y", `${padY}px`);
     panel.style.setProperty("--cell-pad-x", `${padX}px`);
@@ -359,7 +366,10 @@ function render() {
     table.appendChild(tbody);
 
     panel.appendChild(title);
-    panel.appendChild(table);
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "table-wrap";
+    tableWrap.appendChild(table);
+    panel.appendChild(tableWrap);
     board.appendChild(panel);
   });
   requestAnimationFrame(fitAllTables);
@@ -1296,6 +1306,9 @@ async function bootstrap() {
 }
 
 bootstrap();
+
+
+
 
 
 

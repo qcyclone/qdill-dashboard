@@ -371,10 +371,36 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET,OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "*")
         self.end_headers()
 
+    def do_POST(self):
+        u = urlparse(self.path)
+
+        if u.path == "/api/cache":
+            try:
+                cl = int(self.headers.get("Content-Length", "0") or "0")
+                if cl <= 0 or cl > 5 * 1024 * 1024:
+                    self._json({"ok": False, "error": "invalid payload size"}, 400)
+                    return
+
+                raw = self.rfile.read(cl)
+                payload = json.loads(raw.decode("utf-8"))
+                if not isinstance(payload, dict) or not isinstance(payload.get("groups"), list):
+                    self._json({"ok": False, "error": "invalid payload"}, 400)
+                    return
+
+                out_path = os.path.join(ROOT, "data-cache.json")
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, indent=2)
+
+                self._json({"ok": True, "path": out_path})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+            return
+
+        self._json({"ok": False, "error": "not found"}, 404)
     def do_GET(self):
         u = urlparse(self.path)
         if u.path == "/api/fund":
@@ -411,6 +437,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 

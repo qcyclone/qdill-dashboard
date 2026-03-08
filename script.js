@@ -5,8 +5,10 @@ const EM_LSJZ_API = "https://api.fund.eastmoney.com/f10/lsjz";
 const TT_GZ_API = "https://fundgz.1234567.com.cn/js";
 const DOCTOR_API = "https://api.doctorxiong.club/v1/fund";
 const LOCAL_API_CANDIDATES = ["http://127.0.0.1:8899/api/fund", "http://localhost:8899/api/fund", "/api/fund", "http://127.0.0.1:8765/api/fund", "http://localhost:8765/api/fund"];
+const CACHE_WRITE_API_CANDIDATES = ["http://127.0.0.1:8899/api/cache", "http://localhost:8899/api/cache", "/api/cache", "http://127.0.0.1:8765/api/cache", "http://localhost:8765/api/cache"];
 const tradeInfoCache = new Map(); // code -> { dailyLimit, manage }
 const DASHBOARD_CACHE_KEY = "qdii-dashboard-cache-v1";
+const STATIC_CACHE_URL = "./data-cache.json";
 
 const groups = [
   {
@@ -114,53 +116,87 @@ function formatCacheTime(isoText) {
 }
 
 function saveDashboardCache() {
+  const payload = {
+    savedAt: new Date().toISOString(),
+    groups: groups.map((group) => ({
+      id: group.id,
+      rows: group.rows.map((row) => ({ ...row }))
+    }))
+  };
+
   try {
-    const payload = {
-      savedAt: new Date().toISOString(),
-      groups: groups.map((group) => ({
-        id: group.id,
-        rows: group.rows.map((row) => ({ ...row }))
-      }))
-    };
     localStorage.setItem(DASHBOARD_CACHE_KEY, JSON.stringify(payload));
   } catch (_) {
   }
+
+  return payload;
+}
+
+async function writeCacheToFile(payload) {
+  if (!payload) return false;
+
+  for (const url of CACHE_WRITE_API_CANDIDATES) {
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (resp.ok) return true;
+    } catch (_) {
+    }
+  }
+
+  return false;
+}
+
+function applyCachePayload(payload) {
+  if (!payload || !Array.isArray(payload.groups)) return null;
+
+  const groupMap = new Map();
+  payload.groups.forEach((group) => {
+    if (!group?.id || !Array.isArray(group.rows)) return;
+    groupMap.set(group.id, new Map(group.rows.map((row) => [String(row.code), row])));
+  });
+
+  groups.forEach((group) => {
+    const rowMap = groupMap.get(group.id);
+    if (!rowMap) return;
+    group.rows = group.rows.map((row) => {
+      const hit = rowMap.get(String(row.code));
+      if (!hit) return row;
+      const merged = { ...row, ...hit, code: row.code };
+
+      if (isDisplayableDailyLimit(merged.dailyLimit)) {
+        tradeInfoCache.set(row.code, {
+          dailyLimit: normalizeDailyLimitText(String(merged.dailyLimit)),
+          manage: Number.isFinite(Number(merged.manage)) ? Number(merged.manage) : null
+        });
+      }
+
+      return merged;
+    });
+  });
+
+  return payload.savedAt || null;
 }
 
 function restoreDashboardCache() {
   try {
     const raw = localStorage.getItem(DASHBOARD_CACHE_KEY);
     if (!raw) return null;
+    return applyCachePayload(JSON.parse(raw));
+  } catch (_) {
+    return null;
+  }
+}
 
-    const payload = JSON.parse(raw);
-    if (!payload || !Array.isArray(payload.groups)) return null;
-
-    const groupMap = new Map();
-    payload.groups.forEach((group) => {
-      if (!group?.id || !Array.isArray(group.rows)) return;
-      groupMap.set(group.id, new Map(group.rows.map((row) => [String(row.code), row])));
-    });
-
-    groups.forEach((group) => {
-      const rowMap = groupMap.get(group.id);
-      if (!rowMap) return;
-      group.rows = group.rows.map((row) => {
-        const hit = rowMap.get(String(row.code));
-        if (!hit) return row;
-        const merged = { ...row, ...hit, code: row.code };
-
-        if (isDisplayableDailyLimit(merged.dailyLimit)) {
-          tradeInfoCache.set(row.code, {
-            dailyLimit: normalizeDailyLimitText(String(merged.dailyLimit)),
-            manage: Number.isFinite(Number(merged.manage)) ? Number(merged.manage) : null
-          });
-        }
-
-        return merged;
-      });
-    });
-
-    return payload.savedAt || null;
+async function restoreStaticCache() {
+  try {
+    const resp = await fetch(`${STATIC_CACHE_URL}?_=${Date.now()}`, { cache: "no-store" });
+    if (!resp.ok) return null;
+    const payload = await resp.json();
+    return applyCachePayload(payload);
   } catch (_) {
     return null;
   }
@@ -956,13 +992,13 @@ async function refreshData() {
 
   progressBar.style.width = "0%";
   statusCount.textContent = `0/${total}`;
-  statusText.textContent = "并发更新中：AKShare -> 东财 -> 其他兜底";
+  statusText.textContent = "并发更新中";
 
   const updateProgress = (rowCode, source, ok) => {
     done += 1;
     if (ok) {
       success += 1;
-      statusText.textContent = `已更新 ${rowCode}（${source}）`;
+      statusText.textContent = `已更新 ${rowCode}`;
     } else {
       failed += 1;
       statusText.textContent = `更新失败 ${rowCode}`;
@@ -995,12 +1031,13 @@ async function refreshData() {
   await Promise.all(workers);
 
   render();
-  saveDashboardCache();
+  const cachePayload = saveDashboardCache();
+  const fileWritten = await writeCacheToFile(cachePayload);
 
   if (failed > 0) {
-    statusText.textContent = `更新完成：成功 ${success} 条，失败 ${failed} 条（已自动切换多数据源）`;
+    statusText.textContent = `更新完成：成功 ${success} 条，失败 ${failed} 条（已自动切换多数据源）${fileWritten ? "，并已写入 data-cache.json" : ""}`;
   } else {
-    statusText.textContent = "更新完成：全部基金已更新";
+    statusText.textContent = `更新完成：全部基金已更新${fileWritten ? "，并已写入 data-cache.json" : ""}`;
   }
 
   refreshBtn.disabled = false;
@@ -1180,6 +1217,7 @@ async function saveAllPanels() {
       const html2canvas = await loadHtml2Canvas();
       const target = board;
       const canvas = await html2canvas(target, {
+        ignoreElements: (el) => el?.classList?.contains("site-footer") || el?.id === "busuanzi_value_site_pv",
         backgroundColor: "#d8d9de",
         scale: Math.max(2, Math.ceil(window.devicePixelRatio || 1)),
         useCORS: true,
@@ -1228,24 +1266,46 @@ async function saveAllPanels() {
 refreshBtn.addEventListener("click", refreshData);
 saveAllBtn.addEventListener("click", saveAllPanels);
 
-const cachedAt = restoreDashboardCache();
-render();
-
 let fitTimer = null;
 window.addEventListener("resize", () => {
   clearTimeout(fitTimer);
   fitTimer = setTimeout(() => fitAllTables(), 80);
 });
 
-if (cachedAt) {
-  statusText.textContent = `已加载上次缓存（北京时间 ${formatCacheTime(cachedAt)}）`;
-  statusCount.textContent = `${totalRows}/${totalRows}`;
-  progressBar.style.width = "100%";
-} else {
-  statusText.textContent = "已加载本地默认数据，点击“更新所有数据”拉取最新";
-  statusCount.textContent = `0/${totalRows}`;
-  progressBar.style.width = "0%";
+async function bootstrap() {
+  let cachedAt = restoreDashboardCache();
+  let source = "localStorage";
+
+  if (!cachedAt) {
+    cachedAt = await restoreStaticCache();
+    if (cachedAt) source = "static";
+  }
+
+  render();
+
+  if (cachedAt) {
+    const sourceText = source === "static" ? "本地文件缓存" : "上次缓存";
+    statusText.textContent = `已加载${sourceText}（北京时间 ${formatCacheTime(cachedAt)}）`;
+    statusCount.textContent = `${totalRows}/${totalRows}`;
+    progressBar.style.width = "100%";
+  } else {
+    statusText.textContent = "已加载本地默认数据，点击“更新所有数据”拉取最新";
+    statusCount.textContent = `0/${totalRows}`;
+    progressBar.style.width = "0%";
+  }
 }
+
+bootstrap();
+
+
+
+
+
+
+
+
+
+
 
 
 
